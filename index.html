@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Hindi Translator</title>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: auto; padding: 2em; }
+        textarea { width: 100%; min-height: 80px; }
+        button { padding: 0.5em 1em; cursor: pointer; }
+        pre { background-color: #f0f0f0; padding: 1em; white-space: pre-wrap; word-wrap: break-word; }
+    </style>
+</head>
+<body>
+    <h1>Hindi to English Translator</h1>
+    <p>Enter an English sentence to translate it to Hindi.</p>
+
+    <textarea id="inputText" placeholder="e.g., How are you?"></textarea>
+    <button onclick="getPrediction()">Translate</button>
+
+    <h2>Translation:</h2>
+    <pre id="result">The translated text will appear here.</pre>
+
+    <script>
+        // !! IMPORTANT !!
+        // Replace this URL with your HF Space URL, pointing to the greedy endpoint
+        const API_URL = "https://kush26-translate-transformer.hf.space/translate/greedy";
+
+        async function getPrediction() {
+            const text = document.getElementById('inputText').value;
+            const resultElement = document.getElementById('result');
+
+            if (!text) {
+                resultElement.textContent = "Please enter a sentence!";
+                return;
+            }
+            resultElement.textContent = "Translating...";
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ "text": text })
+                });
+
+                const data = await response.json();
+                resultElement.textContent = data.translated_text;
+
+            } catch (error) {
+                resultElement.textContent = "An error occurred. Please check the API logs.";
+            }
+        }
+    </script>
+</body>
+</html>
