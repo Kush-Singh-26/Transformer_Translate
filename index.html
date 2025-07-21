@@ -5,9 +5,11 @@
     <title>Hindi Translator</title>
     <style>
         body { font-family: sans-serif; max-width: 600px; margin: auto; padding: 2em; }
-        textarea { width: 100%; min-height: 80px; }
-        button { padding: 0.5em 1em; cursor: pointer; }
+        textarea { width: 100%; min-height: 80px; margin-bottom: 1em; }
+        button { padding: 0.5em 1em; cursor: pointer; margin-right: 1em; }
         pre { background-color: #f0f0f0; padding: 1em; white-space: pre-wrap; word-wrap: break-word; }
+        .controls { display: flex; align-items: center; gap: 1em; }
+        input[type="number"] { width: 60px; }
     </style>
 </head>
 <body>
@@ -15,38 +17,68 @@
     <p>Enter an English sentence to translate it to Hindi.</p>
 
     <textarea id="inputText" placeholder="e.g., How are you?"></textarea>
-    <button onclick="getPrediction()">Translate</button>
+    
+    <div class="controls">
+        <button onclick="getGreedyPrediction()">Translate (Greedy)</button>
+        
+        <button onclick="getBeamPrediction()">Translate (Beam Search)</button>
+        <label for="beamSize">Beam Size:</label>
+        <input type="number" id="beamSize" value="3" min="1">
+    </div>
 
     <h2>Translation:</h2>
     <pre id="result">The translated text will appear here.</pre>
 
     <script>
-        // !! IMPORTANT !!
-        // Replace this URL with your HF Space URL, pointing to the greedy endpoint
-        const API_URL = "https://kush26-translate-transformer.hf.space/translate/greedy";
+        const GREEDY_API_URL = "https://kush26-translate-transformer.hf.space/translate/greedy";
+        const BEAM_API_URL = "https://kush26-translate-transformer.hf.space/translate/beam";
 
-        async function getPrediction() {
+        const resultElement = document.getElementById('result');
+
+        // Function for Greedy Search
+        async function getGreedyPrediction() {
             const text = document.getElementById('inputText').value;
-            const resultElement = document.getElementById('result');
+            if (!text) {
+                resultElement.textContent = "Please enter a sentence!";
+                return;
+            }
+            resultElement.textContent = "Translating with Greedy Search...";
+
+            try {
+                const response = await fetch(GREEDY_API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ "text": text })
+                });
+                const data = await response.json();
+                resultElement.textContent = data.translated_text;
+            } catch (error) {
+                resultElement.textContent = "An error occurred.";
+            }
+        }
+
+        // NEW: Function for Beam Search
+        async function getBeamPrediction() {
+            const text = document.getElementById('inputText').value;
+            const beamSize = parseInt(document.getElementById('beamSize').value, 10);
 
             if (!text) {
                 resultElement.textContent = "Please enter a sentence!";
                 return;
             }
-            resultElement.textContent = "Translating...";
+            resultElement.textContent = `Translating with Beam Search (size=${beamSize})...`;
 
             try {
-                const response = await fetch(API_URL, {
+                // Notice the different body and URL
+                const response = await fetch(BEAM_API_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ "text": text })
+                    body: JSON.stringify({ "text": text, "beam_size": beamSize })
                 });
-
                 const data = await response.json();
                 resultElement.textContent = data.translated_text;
-
             } catch (error) {
-                resultElement.textContent = "An error occurred. Please check the API logs.";
+                resultElement.textContent = "An error occurred.";
             }
         }
     </script>

@@ -18,23 +18,12 @@ class PositionalEncoding(nn.Module):
         self.d_model = d_model
         self.seq_len = seq_len
         self.dropout = nn.Dropout(dropout)
-
-        # Create a matrix of shape (seq_len, d_model)
         pe = torch.zeros(seq_len, d_model)
-        
-        # Create a vector of shape (seq_len, 1)
         position = torch.arange(0, seq_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        
-        # Apply sin to even indices
         pe[:, 0::2] = torch.sin(position * div_term)
-        # Apply cos to odd indices
         pe[:, 1::2] = torch.cos(position * div_term)
-
-        # Add a batch dimension
-        pe = pe.unsqueeze(0) # (1, seq_len, d_model)
-
-        # Register 'pe' as a buffer, so it's not a model parameter
+        pe = pe.unsqueeze(0)
         self.register_buffer('pe', pe)
 
     def forward(self, x):
@@ -45,8 +34,8 @@ class LayerNorm(nn.Module):
     def __init__(self, d_model: int, epsilon: float = 1e-6):
         super().__init__()
         self.epsilon = epsilon
-        self.gamma = nn.Parameter(torch.ones(d_model)) # Multiplicative
-        self.beta = nn.Parameter(torch.zeros(d_model))  # Additive
+        self.gamma = nn.Parameter(torch.ones(d_model))
+        self.beta = nn.Parameter(torch.zeros(d_model))
 
     def forward(self, x):
         mean = x.mean(dim=-1, keepdim=True)
@@ -61,7 +50,6 @@ class FeedForward(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        # (Batch, Seq_Len, d_model) -> (Batch, Seq_Len, d_ff) -> (Batch, Seq_Len, d_model)
         return self.layer2(self.dropout(torch.relu(self.layer1(x))))
 
 class MHA(nn.Module):
@@ -70,7 +58,6 @@ class MHA(nn.Module):
         self.d_model = d_model
         self.h = h
         assert d_model % h == 0, "d_model must be divisible by h"
-
         self.d_k = d_model // h
         self.w_q = nn.Linear(d_model, d_model)
         self.w_k = nn.Linear(d_model, d_model)
@@ -84,28 +71,20 @@ class MHA(nn.Module):
         attention_scores = (query @ key.transpose(-2, -1)) / math.sqrt(d_k)
         if mask is not None:
             attention_scores = attention_scores.masked_fill(mask == 0, -1e9)
-        
         attention_scores = attention_scores.softmax(dim=-1)
         if dropout is not None:
             attention_scores = dropout(attention_scores)
-        
         return (attention_scores @ value), attention_scores
 
     def forward(self, q, k, v, mask):
-        query = self.w_q(q) # (Batch, Seq_Len, d_model)
-        key = self.w_k(k)   # (Batch, Seq_Len, d_model)
-        value = self.w_v(v) # (Batch, Seq_Len, d_model)
-
-        # (Batch, Seq_Len, d_model) -> (Batch, Seq_Len, h, d_k) -> (Batch, h, Seq_Len, d_k)
+        query = self.w_q(q)
+        key = self.w_k(k)
+        value = self.w_v(v)
         query = query.view(query.shape[0], query.shape[1], self.h, self.d_k).transpose(1, 2)
         key = key.view(key.shape[0], key.shape[1], self.h, self.d_k).transpose(1, 2)
         value = value.view(value.shape[0], value.shape[1], self.h, self.d_k).transpose(1, 2)
-
         x, self.attention_scores = MHA.attention(query, key, value, mask, self.dropout)
-
-        # (Batch, h, Seq_Len, d_k) -> (Batch, Seq_Len, h, d_k) -> (Batch, Seq_Len, d_model)
         x = x.transpose(1, 2).contiguous().view(x.shape[0], -1, self.h * self.d_k)
-
         return self.w_o(x)
 
 class SkipConnection(nn.Module):
@@ -115,19 +94,20 @@ class SkipConnection(nn.Module):
         self.norm = LayerNorm(d_model)
 
     def forward(self, x, sublayer):
-        # Pre-Norm architecture
         return x + self.dropout(sublayer(self.norm(x)))
 
 class EncoderBlock(nn.Module):
     def __init__(self, self_attention: MHA, ffn: FeedForward, d_model: int, dropout: float):
         super().__init__()
-        self.self_attention = self_attention
+        # Name required by the saved model file
+        self.attention = self_attention
         self.ffn = ffn
-        self.skip_connections = nn.ModuleList([SkipConnection(d_model, dropout) for _ in range(2)])
+        # Name required by the saved model file
+        self.residual = nn.ModuleList([SkipConnection(d_model, dropout) for _ in range(2)])
 
     def forward(self, x, src_mask):
-        x = self.skip_connections[0](x, lambda x: self.self_attention(x, x, x, src_mask))
-        x = self.skip_connections[1](x, self.ffn)
+        x = self.residual[0](x, lambda x: self.attention(x, x, x, src_mask))
+        x = self.residual[1](x, self.ffn)
         return x
 
 class Encoder(nn.Module):
@@ -144,15 +124,17 @@ class Encoder(nn.Module):
 class DecoderBlock(nn.Module):
     def __init__(self, self_attention: MHA, cross_attention: MHA, ffn: FeedForward, d_model: int, dropout: float):
         super().__init__()
+        # Name required by the saved model file
         self.self_attention = self_attention
         self.cross_attention = cross_attention
         self.ffn = ffn
-        self.skip_connections = nn.ModuleList([SkipConnection(d_model, dropout) for _ in range(3)])
+        # Name required by the saved model file
+        self.residual = nn.ModuleList([SkipConnection(d_model, dropout) for _ in range(3)])
 
     def forward(self, x, encoder_output, src_mask, trg_mask):
-        x = self.skip_connections[0](x, lambda x: self.self_attention(x, x, x, trg_mask))
-        x = self.skip_connections[1](x, lambda x: self.cross_attention(x, encoder_output, encoder_output, src_mask))
-        x = self.skip_connections[2](x, self.ffn)
+        x = self.residual[0](x, lambda x: self.self_attention(x, x, x, trg_mask))
+        x = self.residual[1](x, lambda x: self.cross_attention(x, encoder_output, encoder_output, src_mask))
+        x = self.residual[2](x, self.ffn)
         return x
 
 class Decoder(nn.Module):
@@ -172,7 +154,6 @@ class Output(nn.Module):
         self.proj = nn.Linear(d_model, vocab_size)
 
     def forward(self, x):
-        # (Batch, Seq_Len, d_model) -> (Batch, Seq_Len, vocab_size)
         return self.proj(x)
 
 class Transformer(nn.Module):
@@ -200,23 +181,16 @@ class Transformer(nn.Module):
         return self.output_layer(x)
 
 def BuildTransformer(src_vocab_size: int, trg_vocab_size: int, src_seq_len: int, trg_seq_len: int, d_model: int = 512, N: int = 6, h: int = 8, dropout: float = 0.1, d_ff: int = 2048) -> Transformer:
-    # Create the embedding layers
     src_embed = InputEmbedding(d_model, src_vocab_size)
     trg_embed = InputEmbedding(d_model, trg_vocab_size)
-
-    # Create the positional encoding layers
     src_pos = PositionalEncoding(d_model, src_seq_len, dropout)
     trg_pos = PositionalEncoding(d_model, trg_seq_len, dropout)
-
-    # Create the encoder blocks
     encoder_blocks = []
     for _ in range(N):
         encoder_self_attention = MHA(d_model, h, dropout)
         ffn = FeedForward(d_model, d_ff, dropout)
         encoder_block = EncoderBlock(encoder_self_attention, ffn, d_model, dropout)
         encoder_blocks.append(encoder_block)
-
-    # Create the decoder blocks
     decoder_blocks = []
     for _ in range(N):
         decoder_self_attention = MHA(d_model, h, dropout)
@@ -224,20 +198,11 @@ def BuildTransformer(src_vocab_size: int, trg_vocab_size: int, src_seq_len: int,
         ffn = FeedForward(d_model, d_ff, dropout)
         decoder_block = DecoderBlock(decoder_self_attention, cross_attention, ffn, d_model, dropout)
         decoder_blocks.append(decoder_block)
-    
-    # Create the encoder and decoder
     encoder = Encoder(d_model, nn.ModuleList(encoder_blocks))
     decoder = Decoder(d_model, nn.ModuleList(decoder_blocks))
-
-    # Create the projection layer
     projection = Output(d_model, trg_vocab_size)
-
-    # Create the transformer
     transformer = Transformer(encoder, decoder, src_embed, trg_embed, src_pos, trg_pos, projection)
-
-    # Initialize parameters
     for p in transformer.parameters():
         if p.dim() > 1:
             nn.init.xavier_uniform_(p)
-    
     return transformer

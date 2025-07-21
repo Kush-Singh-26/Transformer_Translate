@@ -3,3 +3,4 @@ uvicorn[standard]
 torch
 tokenizers
 huggingface_hub
+numpy
